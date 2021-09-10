@@ -60,15 +60,19 @@ public:
 private:
     typedef struct {
         int magic_number{0}; // if it is loaded from state or initialized, then it is set.
-        // ayumi parameters (cached)
-        int mixer[3]{2, 2, 2};
-        int volume[3]{14, 14, 14};
-        float pan[3]{0.5, 0.5, 0.5};
+
+        // ayumi parameters (saved in state)
+        int32_t clock_rate{2000000};
         int32_t envelope{0x40}; // somewhat slow
         // see http://fmpdoc.fmp.jp/%E3%82%A8%E3%83%B3%E3%83%99%E3%83%AD%E3%83%BC%E3%83%97%E3%83%8F%E3%83%BC%E3%83%89%E3%82%A6%E3%82%A7%E3%82%A2/
         int32_t envelope_shape{14};
         int32_t noise_freq{0};
-        int32_t clock_rate{2000000};
+        // per-slot parameters.
+        int volume[3]{14, 14, 14};
+        float pan[3]{0.5, 0.5, 0.5};
+        // 0-5bits: unused (noise freq), 6:tone_off 7:noise_off 8:env_on
+        // (note the `_on` and `_off` difference, off=1 means "disabled")
+        int mixer[3]{2, 2, 2};
 
         inline void reset() {
             magic_number = AYUMI_JUCE_STATE_MAGIC_NUMBER;

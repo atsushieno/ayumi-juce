@@ -201,6 +201,9 @@ void AyumiAudioProcessor::ayumi_process_midi_event(juce::MidiMessage &msg) {
 		if (!a->note_on_state[channel])
 			break; // not at note on state
 		ayumi_set_mixer(&a->impl, channel, 1, 1, 0);
+		// It is kinda hacky, but we "reset" envelope shape to "different value" so that every note can start the envelope waveform
+		// FIXME: should we add another plugin parameter to control whether or not we reset envelope for each note off?
+		ayumi_set_envelope_shape(&a->impl, (ayumi.state.envelope_shape + 1) % 16);
 		a->note_on_state[channel] = false;
 		break;
 	case CMIDI2_STATUS_NOTE_ON:
@@ -213,6 +216,7 @@ void AyumiAudioProcessor::ayumi_process_midi_event(juce::MidiMessage &msg) {
 		noise_switch = (mixer >> 6) & 1;
 		env_switch = (mixer >> 7) & 1;
 		ayumi_set_mixer(&a->impl, channel, tone_switch, noise_switch, env_switch);
+		ayumi_set_envelope_shape(&a->impl, a->state.envelope_shape);
 		ayumi_set_tone(&a->impl, channel, 2000000.0 / (16.0 * key_to_freq(bytes[1])));
 		a->note_on_state[channel] = true;
 		break;
