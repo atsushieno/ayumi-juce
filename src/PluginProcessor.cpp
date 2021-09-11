@@ -30,12 +30,24 @@
 #define AYUMI_PARAMETER_ENVELOPE_SHAPE_INDEX 10
 #define AYUMI_PARAMETER_NOISE_INDEX 11
 #define AYUMI_PARAMETER_CLOCK_RATE_INDEX 12
+#define AYUMI_PARAMETER_SOFTENV_0_NUM_POINTS 13 // start
+#define AYUMI_PARAMETER_SOFTENV_0_POINT_0_CLOCK 14
+#define AYUMI_PARAMETER_SOFTENV_0_POINT_0_RATIO 15
+#define AYUMI_PARAMETER_SOFTENV_0_POINT_5_CLOCK 24
+#define AYUMI_PARAMETER_SOFTENV_0_POINT_5_RATIO 25
+#define AYUMI_PARAMETER_SOFTENV_1_NUM_POINTS 26
+#define AYUMI_PARAMETER_SOFTENV_1_POINT_0_CLOCK 27
+#define AYUMI_PARAMETER_SOFTENV_1_POINT_0_RATIO 28
+#define AYUMI_PARAMETER_SOFTENV_2_NUM_POINTS 39
+#define AYUMI_PARAMETER_SOFTENV_2_POINT_0_CLOCK 40
+#define AYUMI_PARAMETER_SOFTENV_2_POINT_0_RATIO 41
+#define AYUMI_PARAMETER_SOFTENV_2_POINT_5_RATIO 51 // end
 
 //==============================================================================
 
-juce::AudioParameterFloat* createParameter(const char* nameBase, int i, juce::NormalisableRange<float>& range, float def)
+juce::AudioParameterFloat* createParameter(juce::String nameBase, int i, juce::NormalisableRange<float>& range, float def)
 {
-    auto name = juce::String::formatted("%s %d", nameBase, i);
+    auto name = juce::String::formatted("%s %d", nameBase.toRawUTF8(), i);
     return new juce::AudioParameterFloat(name, name, range, def);
 }
 
@@ -60,8 +72,24 @@ AyumiAudioProcessor::AyumiAudioProcessor()
     addParameter(new juce::AudioParameterFloat("Envelope", "Envelope", envelopeRange, 64.0f));
     addParameter(new juce::AudioParameterFloat("EnvelopeShape", "EnvelopeShape", envelopeShapeRange, 14.0f));
     addParameter(new juce::AudioParameterFloat("NoiseFrequency", "NoiseFrequency", noiseFreqRange, 0.0f));
+
     // FIXME: enable once this got to make more sense.
     //addParameter(new juce::AudioParameterFloat("ClockRate", "ClockRate", clockRange, 2000000.0f));
+    addParameter(new juce::AudioParameterFloat("<reserved>", "<reserved>", 0.0f, 1.0f, 0.0f));
+
+    // software envelope
+    EnvelopePoint pointsDefault[6]{{500000, 1.0f}, {5000000, 0.0f}};
+    for (int i = 0; i < 3; i++) {
+        addParameter(createParameter("SoftEnv NumStops ch:", i, softwareEnvelopeNumStopsRange, 2.0f));
+        for (int p = 0; p < 6; p++) {
+            auto clockName = juce::String::formatted("SoftEnv At: %d ch:", p);
+            auto ratioName = juce::String::formatted("SoftEnv vol.rate: %d ch:", p);
+            addParameter(createParameter(clockName, i, softwareEnvelopeStopClockRange,
+                                         softwareEnvelopeStopClockRange.convertTo0to1((float) pointsDefault[p].clockCountAt)));
+            addParameter(createParameter(ratioName, i, softwareEnvelopeStopRatioRange,
+                                         softwareEnvelopeStopRatioRange.convertTo0to1(pointsDefault[p].volumeRatio)));
+        }
+    }
 
     addListener(this);
 }
@@ -130,11 +158,36 @@ void AyumiAudioProcessor::changeProgramName (int index, const juce::String& newN
 {
 }
 
+void AyumiAudioProcessor::setParametersFromState() {
+    auto pl = getParameterTree().getParameters(false);
+    for (int i = 0; i < 3; i++) {
+        pl[AYUMI_PARAMETER_MIXER_0_INDEX + i]->setValue(mixerRange.convertTo0to1(ayumi.state.mixer[i]));
+        pl[AYUMI_PARAMETER_VOLUME_0_INDEX + i]->setValue(volumeRange.convertTo0to1(ayumi.state.volume[i]));
+        pl[AYUMI_PARAMETER_PAN_0_INDEX + i]->setValue(panRange.convertTo0to1(ayumi.state.pan[i]));
+    }
+    pl[AYUMI_PARAMETER_ENVELOPE_INDEX]->setValue(envelopeRange.convertTo0to1(ayumi.state.envelope));
+    pl[AYUMI_PARAMETER_ENVELOPE_SHAPE_INDEX]->setValue(envelopeShapeRange.convertTo0to1(ayumi.state.envelope_shape));
+    pl[AYUMI_PARAMETER_NOISE_INDEX]->setValue(noiseFreqRange.convertTo0to1(ayumi.state.noise_freq));
+    pl[AYUMI_PARAMETER_CLOCK_RATE_INDEX]->setValue(clockRange.convertTo0to1(ayumi.state.clock_rate));
+    for (int i = 0; i < 3; i++) {
+        pl[AYUMI_PARAMETER_SOFTENV_0_NUM_POINTS + i * 13]->setValue(
+                softwareEnvelopeNumStopsRange.convertTo0to1(ayumi.state.softenv_form[i].num_points));
+        for (int p = 0; p < 6; p++) {
+            pl[AYUMI_PARAMETER_SOFTENV_0_POINT_0_CLOCK + i * 13 + p * 2]->setValue(
+                    softwareEnvelopeStopClockRange.convertTo0to1(ayumi.state.softenv_form[i].stops[p].clockCountAt));
+            pl[AYUMI_PARAMETER_SOFTENV_0_POINT_0_RATIO + i * 13 + p * 2]->setValue(
+                    softwareEnvelopeStopRatioRange.convertTo0to1(ayumi.state.softenv_form[i].stops[p].volumeRatio));
+        }
+    }
+}
+
 //==============================================================================
 void AyumiAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     if (ayumi.state.magic_number != AYUMI_JUCE_STATE_MAGIC_NUMBER)
         ayumi.reset();
+
+    setParametersFromState();
 
     ayumi.active = false;
     ayumi.sample_rate = (int) sampleRate;
@@ -217,6 +270,7 @@ void AyumiAudioProcessor::ayumi_process_midi_event(juce::MidiMessage &msg) {
 		env_switch = (mixer >> 7) & 1;
 		ayumi_set_mixer(&a->impl, channel, tone_switch, noise_switch, env_switch);
 		ayumi_set_envelope_shape(&a->impl, a->state.envelope_shape);
+        a->softenv[channel].clock_started = a->currentPluginInstanceClock;
 		ayumi_set_tone(&a->impl, channel, 2000000.0 / (16.0 * key_to_freq(bytes[1])));
 		a->note_on_state[channel] = true;
 		break;
@@ -314,31 +368,53 @@ void AyumiAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		if (msg.getTimeStamp() != 0) {
 			int max = currentFrame + (int) msg.getTimeStamp();
 			max = max < sample_count ? max : sample_count;
-			for (int i = currentFrame; i < max; i++) {
-				ayumi_process(&a->impl);
-				ayumi_remove_dc(&a->impl);
-                int nCh = totalNumOutputChannels - totalNumInputChannels;
-                if (nCh > 0)
-                    auto &ptr = buffer.getWritePointer(totalNumInputChannels)[i] = (float) ayumi.impl.left;
-                if (nCh > 1)
-                    auto &ptr = buffer.getWritePointer(totalNumInputChannels + 1)[i] = (float) ayumi.impl.right;
-			}
+            processFrames(buffer, currentFrame, max);
 			currentFrame = max;
 		}
         ayumi_process_midi_event(msg);
 	}
 
+    processFrames(buffer, currentFrame, sample_count);
+
+    a->currentPluginInstanceClock += a->state.clock_rate / a->sample_rate * sample_count;
+}
+
+void AyumiAudioProcessor::processFrames(juce::AudioBuffer<float>& buffer, int start, int end) {
     // If we support release envelope this optimization will have to change
-    if (ayumi.active && (ayumi.note_on_state[0] || ayumi.note_on_state[1] || ayumi.note_on_state[2])) {
-        for (int i = currentFrame; i < sample_count; i++) {
-            ayumi_process(&a->impl);
-            ayumi_remove_dc(&a->impl);
-            int nCh = totalNumOutputChannels - totalNumInputChannels;
-            if (nCh > 0)
-                auto &ptr = buffer.getWritePointer(totalNumInputChannels)[i] = (float) ayumi.impl.left;
-            if (nCh > 1)
-                auto &ptr = buffer.getWritePointer(totalNumInputChannels + 1)[i] = (float) ayumi.impl.right;
+    if (!ayumi.active)
+        return;
+    if(!ayumi.note_on_state[0] && !ayumi.note_on_state[1] && !ayumi.note_on_state[2])
+        return;
+
+    auto *a = &ayumi;
+    auto totalNumInputChannels  = getTotalNumInputChannels();
+    auto totalNumOutputChannels = getTotalNumOutputChannels();
+
+    int64_t clockCountPerFrame = a->state.clock_rate / a->sample_rate;
+    int64_t currentClockInScope = a->currentPluginInstanceClock;
+    for (int i = start; i < end; i++) {
+        // adjust volume for software envelope
+        float fv[3];
+        int iv[3];
+        for (int ch = 0; ch < 2; ch++) {
+            if (!a->note_on_state[i])
+                continue;
+            float f = (float) a->state.volume[ch] * a->softenv[i].getRatio(currentClockInScope - a->softenv[i].clock_started);
+            int v = (int) round(f);
+            fv[ch] = f;
+            iv[ch] = v;
+            ayumi_set_volume(&a->impl, i, v);
         }
+
+        ayumi_process(&a->impl);
+        ayumi_remove_dc(&a->impl);
+        int nCh = totalNumOutputChannels - totalNumInputChannels;
+        if (nCh > 0)
+            auto &ptr = buffer.getWritePointer(totalNumInputChannels)[i] = (float) ayumi.impl.left;
+        if (nCh > 1)
+            auto &ptr = buffer.getWritePointer(totalNumInputChannels + 1)[i] = (float) ayumi.impl.right;
+
+        currentClockInScope += clockCountPerFrame;
     }
 }
 
@@ -356,7 +432,7 @@ juce::AudioProcessorEditor* AyumiAudioProcessor::createEditor()
 //==============================================================================
 void AyumiAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    juce::MemoryOutputStream stream{destData, true};
+    juce::MemoryOutputStream stream{destData, false};
 
     for (int i = 0; i < 3; i++)
         stream.writeInt(ayumi.state.mixer[i]);
@@ -368,12 +444,21 @@ void AyumiAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     stream.writeInt(ayumi.state.envelope_shape);
     stream.writeInt(ayumi.state.noise_freq);
     stream.writeInt(ayumi.state.clock_rate);
+
+    for (int i = 0; i < 3; i++) {
+        stream.writeInt(ayumi.state.softenv_form[i].num_points);
+        for (int p = 0; p < 6; p++) {
+            stream.writeInt(ayumi.state.softenv_form[i].stops[p].clockCountAt);
+            stream.writeFloat(ayumi.state.softenv_form[i].stops[p].volumeRatio);
+        }
+    }
+
     stream.flush();
 }
 
 void AyumiAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    if (sizeInBytes < 52)
+    if (sizeInBytes < 51 * 4)
         return; // insufficient space
     juce::MemoryInputStream stream{data, (size_t) sizeInBytes, true};
 
@@ -387,6 +472,14 @@ void AyumiAudioProcessor::setStateInformation (const void* data, int sizeInBytes
     ayumi.state.envelope_shape = stream.readInt();
     ayumi.state.noise_freq = stream.readInt();
     ayumi.state.clock_rate = stream.readInt();
+
+    for (int i = 0; i < 3; i++) {
+        ayumi.state.softenv_form[i].num_points = stream.readInt();
+        for (int p = 0; p < 6; p++) {
+            ayumi.state.softenv_form[i].stops[p].clockCountAt = stream.readInt();
+            ayumi.state.softenv_form[i].stops[p].volumeRatio = stream.readFloat();
+        }
+    }
 
     ayumi.state.magic_number = AYUMI_JUCE_STATE_MAGIC_NUMBER;
 }
@@ -424,7 +517,22 @@ void AyumiAudioProcessor::audioProcessorParameterChanged(juce::AudioProcessor *p
                 clock = (int) clockRange.convertFrom0to1(newValue);
                 ayumi.state.clock_rate = clock;
                 ayumi_configure(&ayumi.impl, 1, clock, ayumi.sample_rate);
-            default: break;
+                break;
+            default:
+                if (AYUMI_PARAMETER_SOFTENV_0_NUM_POINTS <= parameterIndex && parameterIndex <= AYUMI_PARAMETER_SOFTENV_0_POINT_0_CLOCK + 12) {
+                    auto targetCh = (parameterIndex - AYUMI_PARAMETER_SOFTENV_0_POINT_0_CLOCK) / 13;
+                    auto offset = parameterIndex - targetCh * 13 - AYUMI_PARAMETER_SOFTENV_0_NUM_POINTS;
+                    if (offset == 0)
+                        ayumi.state.softenv_form[targetCh].num_points = (int) softwareEnvelopeNumStopsRange.convertFrom0to1(newValue);
+                    else {
+                        auto &stop = ayumi.state.softenv_form[targetCh].stops[(offset - 1) / 2];
+                        if (offset % 2)
+                            stop.clockCountAt = (int) softwareEnvelopeStopClockRange.convertFrom0to1(newValue);
+                        else
+                            stop.volumeRatio = softwareEnvelopeStopRatioRange.convertFrom0to1(newValue);
+                    }
+                }
+                break;
         }
     }
 }

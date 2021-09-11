@@ -58,6 +58,44 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
 private:
+    // envelope form (definition) and per-note instance
+    typedef struct EnvelopePoint_tag {
+        int32_t clockCountAt{0};
+        float volumeRatio{1.0f}; // 0-127
+    } EnvelopePoint;
+
+    typedef struct EnvelopeForm_tag {
+        uint8_t num_points{2};
+        EnvelopePoint stops[6]{{1000000, 1.0f}, {5000000, 0.0f}, {}, {}, {}, {}}; // 6 would suffice, but we can increment later if we want.
+    } EnvelopeForm;
+
+    static int pointAt(int64_t positionInClock, EnvelopeForm& form) {
+        for (int i = 0; i < 6; i++)
+            if (positionInClock < form.stops[i].clockCountAt)
+                return i;
+        return -1; // beyond definition
+    }
+
+    static float getRatioForForm(int64_t positionInClock, EnvelopeForm& form) {
+        int pIndex = pointAt(positionInClock, form);
+        if (pIndex < 0)
+            return form.stops[form.num_points - 1].volumeRatio;
+        float startRatio = pIndex == 0 ? 0.0f : form.stops[pIndex - 1].volumeRatio;
+        int64_t startClock = pIndex == 0 ? 0 : form.stops[pIndex - 1].clockCountAt;
+        float progress = (float) (positionInClock - startClock) / (float) (form.stops[pIndex].clockCountAt - startClock);
+        float result = startRatio + progress * (form.stops[pIndex].volumeRatio - startRatio);
+        return result;
+    }
+
+    typedef struct EnvelopeInstance_tag {
+        EnvelopeForm form{};
+        int64_t clock_started{0};
+
+        float getRatio(int64_t positionInClock) {
+            return getRatioForForm(positionInClock, form);
+        }
+    } EnvelopeInstance;
+
     typedef struct {
         int magic_number{0}; // if it is loaded from state or initialized, then it is set.
 
@@ -66,6 +104,7 @@ private:
         int32_t envelope{0x40}; // somewhat slow
         // see http://fmpdoc.fmp.jp/%E3%82%A8%E3%83%B3%E3%83%99%E3%83%AD%E3%83%BC%E3%83%97%E3%83%8F%E3%83%BC%E3%83%89%E3%82%A6%E3%82%A7%E3%82%A2/
         int32_t envelope_shape{14};
+        EnvelopeForm softenv_form[3]{{}, {}, {}};
         int32_t noise_freq{0};
         // per-slot parameters.
         int volume[3]{14, 14, 14};
@@ -83,6 +122,7 @@ private:
             envelope_shape = 14;
             noise_freq = 0;
             clock_rate = 2000000;
+            softenv_form[0] = softenv_form[1] = softenv_form[2] = EnvelopeForm{};
         }
     } AyumiState;
 
@@ -94,6 +134,8 @@ private:
         bool active{false};
         int32_t pitchbend{0};
         bool note_on_state[3]{false, false, false};
+        int64_t currentPluginInstanceClock{0};
+        EnvelopeInstance softenv[3]{{}, {}, {}};
 
         inline void reset() {
             state.reset();
@@ -105,6 +147,7 @@ private:
     } AyumiContext;
 
     AyumiContext ayumi;
+    // FIXME: we should remove dependency on JUCE and make plugin core implementation independent of JUCE...
     juce::NormalisableRange<float> mixerRange{0.0f, 8.0f, 1.0f};
     juce::NormalisableRange<float> volumeRange{0.0f, 14.0f, 1.0f}; // FIXME: max = 14?? 15 doesn't work
     juce::NormalisableRange<float> panRange{0.0f, 1.0f};
@@ -112,7 +155,12 @@ private:
     juce::NormalisableRange<float> envelopeShapeRange{0.0f, 15.0f, 1.0f};
     juce::NormalisableRange<float> noiseFreqRange{0.0f, 31.0f, 1.0f};
     juce::NormalisableRange<float> clockRange{0.0f, 16777215.0f, 1.0f, 0.2f}; // does this range make sense?
+    juce::NormalisableRange<float> softwareEnvelopeNumStopsRange{0.0f, 6.0f, 1.0f};
+    juce::NormalisableRange<float> softwareEnvelopeStopClockRange{0.0f, 167777215.0f, 1.0f, 0.2f}; // same as clock range so far
+    juce::NormalisableRange<float> softwareEnvelopeStopRatioRange{0.0f, 1.0f};
 
+    void setParametersFromState();
+    void processFrames(juce::AudioBuffer<float>& buffer, int start, int end);
     void ayumi_process_midi_event(juce::MidiMessage &msg);
     void audioProcessorParameterChanged(AudioProcessor *processor, int parameterIndex, float newValue) override;
     void audioProcessorChanged(AudioProcessor *processor, const AudioProcessor::ChangeDetails &details) override;
