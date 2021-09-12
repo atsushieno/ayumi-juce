@@ -60,7 +60,7 @@ public:
 private:
     // envelope form (definition) and per-note instance
     typedef struct EnvelopePoint_tag {
-        int32_t clockCountAt{0};
+        float stopAt{0};
         float volumeRatio{1.0f}; // 0-127
     } EnvelopePoint;
 
@@ -69,30 +69,30 @@ private:
         EnvelopePoint stops[6]{{1000000, 1.0f}, {5000000, 0.0f}, {}, {}, {}, {}}; // 6 would suffice, but we can increment later if we want.
     } EnvelopeForm;
 
-    static int pointAt(int64_t positionInClock, EnvelopeForm& form) {
+    static int pointAt(float positionInSeconds, EnvelopeForm& form) {
         for (int i = 0; i < 6; i++)
-            if (positionInClock < form.stops[i].clockCountAt)
+            if (positionInSeconds < form.stops[i].stopAt)
                 return i;
         return -1; // beyond definition
     }
 
-    static float getRatioForForm(int64_t positionInClock, EnvelopeForm& form) {
-        int pIndex = pointAt(positionInClock, form);
+    static float getRatioForForm(float positionInSeconds, EnvelopeForm& form) {
+        int pIndex = pointAt(positionInSeconds, form);
         if (pIndex < 0)
             return form.stops[form.num_points - 1].volumeRatio;
         float startRatio = pIndex == 0 ? 0.0f : form.stops[pIndex - 1].volumeRatio;
-        int64_t startClock = pIndex == 0 ? 0 : form.stops[pIndex - 1].clockCountAt;
-        float progress = (float) (positionInClock - startClock) / (float) (form.stops[pIndex].clockCountAt - startClock);
+        float startAt = pIndex == 0 ? 0 : form.stops[pIndex - 1].stopAt;
+        float progress = (float) (positionInSeconds - startAt) / (form.stops[pIndex].stopAt - startAt);
         float result = startRatio + progress * (form.stops[pIndex].volumeRatio - startRatio);
         return result;
     }
 
     typedef struct EnvelopeInstance_tag {
         EnvelopeForm form{};
-        int64_t clock_started{0};
+        float started_at{0};
 
-        float getRatio(int64_t positionInClock) {
-            return getRatioForForm(positionInClock, form);
+        float getRatio(float positionInSeconds) {
+            return getRatioForForm(positionInSeconds, form);
         }
     } EnvelopeInstance;
 
@@ -134,7 +134,7 @@ private:
         bool active{false};
         int32_t pitchbend{0};
         bool note_on_state[3]{false, false, false};
-        int64_t currentPluginInstanceClock{0};
+        float currentPluginInstanceClock{0.0f};
         EnvelopeInstance softenv[3]{{}, {}, {}};
 
         inline void reset() {
@@ -156,7 +156,7 @@ private:
     juce::NormalisableRange<float> noiseFreqRange{0.0f, 31.0f, 1.0f};
     juce::NormalisableRange<float> clockRange{0.0f, 16777215.0f, 1.0f, 0.2f}; // does this range make sense?
     juce::NormalisableRange<float> softwareEnvelopeNumStopsRange{0.0f, 6.0f, 1.0f};
-    juce::NormalisableRange<float> softwareEnvelopeStopClockRange{0.0f, 167777215.0f, 1.0f, 0.2f}; // same as clock range so far
+    juce::NormalisableRange<float> softwareEnvelopeStopSecondsRange{0.0f, 4096.0f, 0.01f, 0.2f}; // same as clock range so far
     juce::NormalisableRange<float> softwareEnvelopeStopRatioRange{0.0f, 1.0f};
 
     void setParametersFromState();
