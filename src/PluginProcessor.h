@@ -64,10 +64,14 @@ private:
         float volumeRatio{1.0f}; // 0-127
     } EnvelopePoint;
 
+    EnvelopePoint stopsDefault[6]{{0.3f, 1.0f}, {3.0f, 0.0f}, {}, {}, {}, {}};
+
     typedef struct EnvelopeForm_tag {
         uint8_t num_points{2};
-        EnvelopePoint stops[6]{{1000000, 1.0f}, {5000000, 0.0f}, {}, {}, {}, {}}; // 6 would suffice, but we can increment later if we want.
+        // 6 would suffice, but we can increment later if we want.
+        EnvelopePoint stops[6]{{0.3f, 1.0f}, {3.0f, 0.0f}, {}, {}, {}, {}};
     } EnvelopeForm;
+
 
     static int pointAt(float positionInSeconds, EnvelopeForm& form) {
         for (int i = 0; i < 6; i++)
@@ -134,7 +138,7 @@ private:
         bool active{false};
         int32_t pitchbend{0};
         bool note_on_state[3]{false, false, false};
-        float currentPluginInstanceClock{0.0f};
+        float totalProcessRunSeconds{0.0f};
         EnvelopeInstance softenv[3]{{}, {}, {}};
 
         inline void reset() {

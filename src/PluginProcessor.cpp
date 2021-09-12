@@ -15,6 +15,17 @@
 #define AYUMI_LV2_MIDI_CC_ENVELOPE_M 0x11
 #define AYUMI_LV2_MIDI_CC_ENVELOPE_L 0x12
 #define AYUMI_LV2_MIDI_CC_ENVELOPE_SHAPE 0x13
+// FIXME: make use of them (but we first need to determine how 0-127 falls to represent "seconds").
+#define AYUMI_LV2_MIDI_CC_SOFTENV_NUM_PARAMS_0_INDEX 0x20
+#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_0_AT_0_INDEX 0x21
+#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_0_VRATE_0_INDEX 0x22
+#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_1_AT_0_INDEX 0x23
+#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_1_VRATE_0_INDEX 0x24
+#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_5_AT_0_INDEX 0x2B
+#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_5_VRATE_0_INDEX 0x2C
+#define AYUMI_LV2_MIDI_CC_SOFTENV_NUM_PARAMS_1_INDEX 0x2D
+#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_0_AT_1_INDEX 0x3A
+#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_5_VRATE_2_INDEX 0x45
 #define AYUMI_LV2_MIDI_CC_DC 0x50
 
 #define AYUMI_PARAMETER_MIXER_0_INDEX 0
@@ -42,6 +53,7 @@
 #define AYUMI_PARAMETER_SOFTENV_2_POINT_0_CLOCK 40
 #define AYUMI_PARAMETER_SOFTENV_2_POINT_0_RATIO 41
 #define AYUMI_PARAMETER_SOFTENV_2_POINT_5_RATIO 51 // end
+#define AYUMI_NUM_PARAMETERS 52
 
 //==============================================================================
 
@@ -78,16 +90,15 @@ AyumiAudioProcessor::AyumiAudioProcessor()
     addParameter(new juce::AudioParameterFloat("<reserved>", "<reserved>", 0.0f, 1.0f, 0.0f));
 
     // software envelope
-    EnvelopePoint pointsDefault[6]{{500000, 1.0f}, {5000000, 0.0f}};
     for (int i = 0; i < 3; i++) {
         addParameter(createParameter("SoftEnv NumStops ch:", i, softwareEnvelopeNumStopsRange, 2.0f));
         for (int p = 0; p < 6; p++) {
             auto clockName = juce::String::formatted("SoftEnv At: %d ch:", p);
             auto ratioName = juce::String::formatted("SoftEnv vol.rate: %d ch:", p);
             addParameter(createParameter(clockName, i, softwareEnvelopeStopSecondsRange,
-                                         softwareEnvelopeStopSecondsRange.convertTo0to1(pointsDefault[p].stopAt)));
+                                         softwareEnvelopeStopSecondsRange.convertTo0to1(stopsDefault[p].stopAt)));
             addParameter(createParameter(ratioName, i, softwareEnvelopeStopRatioRange,
-                                         softwareEnvelopeStopRatioRange.convertTo0to1(pointsDefault[p].volumeRatio)));
+                                         softwareEnvelopeStopRatioRange.convertTo0to1(stopsDefault[p].volumeRatio)));
         }
     }
 
@@ -261,28 +272,29 @@ void AyumiAudioProcessor::ayumi_process_midi_event(juce::MidiMessage &msg) {
 		break;
 	case CMIDI2_STATUS_NOTE_ON:
 		if (bytes[2] == 0)
-			goto note_off; // it is illegal though.
+			goto note_off;
 		if (a->note_on_state[channel])
 			break; // busy
 		mixer = a->state.mixer[channel];
-		tone_switch = (mixer >> 5) & 1;
-		noise_switch = (mixer >> 6) & 1;
-		env_switch = (mixer >> 7) & 1;
+		tone_switch = mixer & 1;
+		noise_switch = mixer & 2 ? 1 : 0;
+		env_switch = mixer & 4 ? 1 : 0;
 		ayumi_set_mixer(&a->impl, channel, tone_switch, noise_switch, env_switch);
 		ayumi_set_envelope_shape(&a->impl, a->state.envelope_shape);
-        a->softenv[channel].started_at = a->currentPluginInstanceClock;
+        a->softenv[channel].started_at = a->totalProcessRunSeconds;
 		ayumi_set_tone(&a->impl, channel, 2000000.0 / (16.0 * key_to_freq(bytes[1])));
 		a->note_on_state[channel] = true;
 		break;
 	case CMIDI2_STATUS_PROGRAM:
 		noise = bytes[1] & 0x1F;
 		ayumi_set_noise(&a->impl, noise);
-		mixer = bytes[1];
-		tone_switch = (mixer >> 5) & 1;
-		noise_switch = (mixer >> 6) & 1;
+		mixer = bytes[1] >> 5;
+		tone_switch = mixer & 1;
+		noise_switch = mixer & 2 ? 1 : 0;
 		// We cannot pass 8 bit message, so we remove env_switch here. Use BankMSB for it.
-		env_switch = (a->state.mixer[channel] >> 7) & 1;
-		a->state.mixer[channel] = bytes[1];
+		env_switch = mixer & 4 ? 1 : 0;
+		a->state.mixer[channel] = mixer;
+        a->state.noise_freq = noise;
 		ayumi_set_mixer(&a->impl, channel, tone_switch, noise_switch, env_switch);
 		break;
 	case CMIDI2_STATUS_CC:
@@ -376,7 +388,7 @@ void AyumiAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
     processFrames(buffer, currentFrame, sample_count);
 
-    a->currentPluginInstanceClock += a->state.clock_rate / a->sample_rate * sample_count;
+    a->totalProcessRunSeconds += (float) sample_count / (float) a->sample_rate;
 }
 
 void AyumiAudioProcessor::processFrames(juce::AudioBuffer<float>& buffer, int start, int end) {
@@ -391,19 +403,27 @@ void AyumiAudioProcessor::processFrames(juce::AudioBuffer<float>& buffer, int st
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
     float secondsPerFrame = (float) (end - start) / a->sample_rate;
-    float positionInSeconds = a->currentPluginInstanceClock;
+    float positionInSeconds = a->totalProcessRunSeconds;
+    int v_cache[3]{-1, -1, -1};
     for (int i = start; i < end; i++) {
         // adjust volume for software envelope
-        float fv[3];
-        int iv[3];
-        for (int ch = 0; ch < 2; ch++) {
-            if (!a->note_on_state[i])
-                continue;
-            float f = (float) a->state.volume[ch] * a->softenv[i].getRatio(positionInSeconds - a->softenv[i].started_at);
-            int v = (int) round(f);
-            fv[ch] = f;
-            iv[ch] = v;
-            ayumi_set_volume(&a->impl, i, v);
+        if (i % 100 == 0) {
+            // software envelope does not always have to be processed. Do it only once in 100 frames.
+            for (int ch = 0; ch < 2; ch++) {
+                if (!a->note_on_state[ch])
+                    continue;
+                if (a->state.softenv_form[ch].num_points == 0)
+                    continue; // software envelope is disabled.
+                float at = positionInSeconds - a->softenv[ch].started_at;
+                float f = (float) a->state.volume[ch] * a->softenv[ch].getRatio(at);
+                int v = (int) round(f);
+                if (v != v_cache[ch]) {
+                    if (v_cache[ch] - v > 1 || v - v_cache[ch] < -1)
+                        continue; // error, but we cannot break RT audio processing.
+                    ayumi_set_volume(&a->impl, ch, v);
+                    v_cache[ch] = v;
+                }
+            }
         }
 
         ayumi_process(&a->impl);
@@ -458,7 +478,7 @@ void AyumiAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 
 void AyumiAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    if (sizeInBytes < 51 * 4)
+    if (sizeInBytes < AYUMI_NUM_PARAMETERS * 4)
         return; // insufficient space
     juce::MemoryInputStream stream{data, (size_t) sizeInBytes, true};
 
@@ -487,7 +507,7 @@ void AyumiAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 void AyumiAudioProcessor::audioProcessorParameterChanged(juce::AudioProcessor *processor, int parameterIndex,
                                                          float newValue) {
     if (parameterIndex <= AYUMI_PARAMETER_MIXER_2_INDEX) {
-        ayumi.state.mixer[parameterIndex % 3] = ((int) mixerRange.convertFrom0to1(newValue)) << 5;
+        ayumi.state.mixer[parameterIndex % 3] = (int) mixerRange.convertFrom0to1(newValue);
     } else if (parameterIndex <= AYUMI_PARAMETER_VOLUME_2_INDEX) {
         auto vol = (int) volumeRange.convertFrom0to1(newValue);
         ayumi.state.volume[parameterIndex % 3] = vol;
