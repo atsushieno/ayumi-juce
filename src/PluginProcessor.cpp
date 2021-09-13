@@ -16,16 +16,14 @@
 #define AYUMI_LV2_MIDI_CC_ENVELOPE_L 0x12
 #define AYUMI_LV2_MIDI_CC_ENVELOPE_SHAPE 0x13
 // FIXME: make use of them (but we first need to determine how 0-127 falls to represent "seconds").
-#define AYUMI_LV2_MIDI_CC_SOFTENV_NUM_PARAMS_0_INDEX 0x20
-#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_0_AT_0_INDEX 0x21
-#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_0_VRATE_0_INDEX 0x22
-#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_1_AT_0_INDEX 0x23
-#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_1_VRATE_0_INDEX 0x24
-#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_5_AT_0_INDEX 0x2B
-#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_5_VRATE_0_INDEX 0x2C
-#define AYUMI_LV2_MIDI_CC_SOFTENV_NUM_PARAMS_1_INDEX 0x2D
-#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_0_AT_1_INDEX 0x3A
-#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_5_VRATE_2_INDEX 0x45
+#define AYUMI_LV2_MIDI_CC_SOFTENV_NUM_PARAMS_INDEX 0x20
+#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_0_AT_INDEX 0x21
+#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_0_VRATE_INDEX 0x22
+#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_1_AT_INDEX 0x23
+#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_1_VRATE_INDEX 0x24
+// ...(contd)...
+#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_5_AT_INDEX 0x2B
+#define AYUMI_LV2_MIDI_CC_SOFTENV_STOP_5_VRATE_INDEX 0x2C
 #define AYUMI_LV2_MIDI_CC_DC 0x50
 
 #define AYUMI_PARAMETER_MIXER_0_INDEX 0
@@ -333,7 +331,22 @@ void AyumiAudioProcessor::ayumi_process_midi_event(juce::MidiMessage &msg) {
 		case AYUMI_LV2_MIDI_CC_DC:
 			ayumi_remove_dc(&a->impl);
 			break;
-		}
+        default:
+            if (AYUMI_LV2_MIDI_CC_SOFTENV_NUM_PARAMS_INDEX <= bytes[1] && bytes[1] <= AYUMI_LV2_MIDI_CC_SOFTENV_STOP_5_VRATE_INDEX) {
+                int para = bytes[1] - AYUMI_LV2_MIDI_CC_SOFTENV_NUM_PARAMS_INDEX;
+                if (para == 0)
+                    a->state.softenv_form[channel].num_points = bytes[2];
+                else {
+                    if (para % 2)
+                        // y=0.001x^2. It can be different curve, but I find this useful.
+                        a->state.softenv_form[channel].stops[para / 2].stopAt = bytes[2] * bytes[2] * 0.001f;
+                    else
+                        // it does not necessarily have to be like this, but we treat 64 as 0.5 here.
+                        a->state.softenv_form[channel].stops[para / 2].volumeRatio = bytes[2] <= 64 ? bytes[2] / 128.0f : bytes[2] / 127.0f;
+                }
+            }
+            break;
+        }
 		break;
 	case CMIDI2_STATUS_PITCH_BEND:
 		a->pitchbend = (bytes[1] << 7) + bytes[2];
