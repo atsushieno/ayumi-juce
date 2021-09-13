@@ -4,6 +4,8 @@ ayumi-juce is a JUCE port of [ayumi-lv2](https://github.com/atsushieno/ayumi-lv2
 
 It is primarily build for [augene-ng](https://github.com/atsushieno/augene-ng) project that requires VST3 on Linux (which is the only common plugin format among OSS AudioPluginHost build and Tracktion Waveform).
 
+If you are looking for general purpose YM2149 emulator you should check out [zynayumi](https://github.com/zynayumi/zynayumi) instead. It supports whatever DPF supports (VST3 is not supported, also not likely for Android).
+
 The plugin can be controlled either via plugin parameters or MIDI messages such as program changes and control changes (explained below).
 
 ## Software envelope
