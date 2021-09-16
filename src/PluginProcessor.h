@@ -92,10 +92,9 @@ private:
     }
 
     typedef struct EnvelopeInstance_tag {
-        EnvelopeForm form{};
         float started_at{0};
 
-        float getRatio(float positionInSeconds) {
+        float getRatio(float positionInSeconds, EnvelopeForm& form) {
             return getRatioForForm(positionInSeconds, form);
         }
     } EnvelopeInstance;

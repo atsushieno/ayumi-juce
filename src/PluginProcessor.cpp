@@ -428,7 +428,7 @@ void AyumiAudioProcessor::processFrames(juce::AudioBuffer<float>& buffer, int st
                 if (a->state.softenv_form[ch].num_points == 0)
                     continue; // software envelope is disabled.
                 float at = positionInSeconds - a->softenv[ch].started_at;
-                float f = (float) a->state.volume[ch] * a->softenv[ch].getRatio(at);
+                float f = (float) a->state.volume[ch] * a->softenv[ch].getRatio(at, a->state.softenv_form[ch]);
                 int v = (int) round(f);
                 if (v != v_cache[ch]) {
                     ayumi_set_volume(&a->impl, ch, v);
