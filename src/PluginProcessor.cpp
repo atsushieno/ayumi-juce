@@ -415,14 +415,14 @@ void AyumiAudioProcessor::processFrames(juce::AudioBuffer<float>& buffer, int st
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
-    float secondsPerFrame = (float) (end - start) / a->sample_rate;
+    float secondsPerFrame = 1.0f / (float) a->sample_rate;
     float positionInSeconds = a->totalProcessRunSeconds;
     int v_cache[3]{-1, -1, -1};
     for (int i = start; i < end; i++) {
         // adjust volume for software envelope
-        if (i % 100 == 0) {
+        if (i % 25 == 0) {
             // software envelope does not always have to be processed. Do it only once in 100 frames.
-            for (int ch = 0; ch < 2; ch++) {
+            for (int ch = 0; ch < 3; ch++) {
                 if (!a->note_on_state[ch])
                     continue;
                 if (a->state.softenv_form[ch].num_points == 0)
@@ -431,8 +431,6 @@ void AyumiAudioProcessor::processFrames(juce::AudioBuffer<float>& buffer, int st
                 float f = (float) a->state.volume[ch] * a->softenv[ch].getRatio(at);
                 int v = (int) round(f);
                 if (v != v_cache[ch]) {
-                    if (v_cache[ch] - v > 1 || v - v_cache[ch] < -1)
-                        continue; // error, but we cannot break RT audio processing.
                     ayumi_set_volume(&a->impl, ch, v);
                     v_cache[ch] = v;
                 }
