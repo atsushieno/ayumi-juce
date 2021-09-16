@@ -135,7 +135,8 @@ private:
         // non-persistent states
         int32_t sample_rate{44100}; // stored for reconfiguration
         bool active{false};
-        int32_t pitchbend{0};
+        int32_t pitchbend[3]{0, 0, 0};
+        float pitchbend_sensitivity{2.0};
         bool note_on_state[3]{false, false, false};
         float totalProcessRunSeconds{0.0f};
         EnvelopeInstance softenv[3]{{}, {}, {}};
@@ -144,7 +145,7 @@ private:
             state.reset();
             sample_rate = 44100;
             active = false;
-            pitchbend = 0;
+            pitchbend[0] = pitchbend[1] = pitchbend[2] = 0;
             note_on_state[0] = note_on_state[1] = note_on_state[2] = false;
         }
     } AyumiContext;

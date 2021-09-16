@@ -257,6 +257,7 @@ void AyumiAudioProcessor::ayumi_process_midi_event(juce::MidiMessage &msg) {
 	if (channel > 2)
 		return;
 	int mixer;
+	float keyWithPitchbend;
 	switch (bytes[0] & 0xF0) {
     note_off:
 	case CMIDI2_STATUS_NOTE_OFF:
@@ -280,7 +281,8 @@ void AyumiAudioProcessor::ayumi_process_midi_event(juce::MidiMessage &msg) {
 		ayumi_set_mixer(&a->impl, channel, tone_switch, noise_switch, env_switch);
 		ayumi_set_envelope_shape(&a->impl, a->state.envelope_shape);
         a->softenv[channel].started_at = a->totalProcessRunSeconds;
-		ayumi_set_tone(&a->impl, channel, 2000000.0 / (16.0 * key_to_freq(bytes[1])));
+		keyWithPitchbend = (float) bytes[1] + (float) a->pitchbend[channel] / 8192 * a->pitchbend_sensitivity;
+		ayumi_set_tone(&a->impl, channel, (int) (2000000.0 / (16.0 * key_to_freq(keyWithPitchbend)))); // https://www.msx.org/forum/msx-talk/development/ay-3-8910-frequency-question
 		a->note_on_state[channel] = true;
 		break;
 	case CMIDI2_STATUS_PROGRAM:
@@ -349,7 +351,7 @@ void AyumiAudioProcessor::ayumi_process_midi_event(juce::MidiMessage &msg) {
         }
 		break;
 	case CMIDI2_STATUS_PITCH_BEND:
-		a->pitchbend = (bytes[1] << 7) + bytes[2];
+		a->pitchbend[channel] = (bytes[1] << 7) + bytes[2];
 		break;
 	default:
 		break;
