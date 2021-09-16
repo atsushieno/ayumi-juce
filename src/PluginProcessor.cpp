@@ -245,7 +245,7 @@ bool AyumiAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) co
 double key_to_freq(double key) {
     // We use equal temperament
     // https://pages.mtu.edu/~suits/NoteFreqCalcs.html
-    double ret = 220.0 * pow(1.059463, key - 45.0);
+    double ret = 440.0 * pow(1.059463, key - 57.0);
     return ret;
 }
 
