@@ -282,7 +282,16 @@ void AyumiAudioProcessor::ayumi_process_midi_event(juce::MidiMessage &msg) {
 		ayumi_set_envelope_shape(&a->impl, a->state.envelope_shape);
         a->softenv[channel].started_at = a->totalProcessRunSeconds;
 		keyWithPitchbend = (float) bytes[1] + (float) a->pitchbend[channel] / 8192 * a->pitchbend_sensitivity;
-		ayumi_set_tone(&a->impl, channel, (int) (2000000.0 / (16.0 * key_to_freq(keyWithPitchbend)))); // https://www.msx.org/forum/msx-talk/development/ay-3-8910-frequency-question
+
+		// zynayumi seems to calculate it by pitch diff from C0 (8.1757989156) which seems precise
+		//  than `2000000.0 / (16.0 * key_to_freq(keyWithPitchbend))` (from https://www.msx.org/forum/msx-talk/development/ay-3-8910-frequency-question)
+		// https://github.com/zynayumi/libzynayumi/blob/08d8e30/src/zynayumi/engine.cpp#L364
+		{
+			const double c1f = (a->state.clock_rate / 8.1757989156) / 16.0;
+			static const double perKeyExp = log(2.0) / 12.0;
+			double reg = c1f * exp(-keyWithPitchbend * perKeyExp);
+			ayumi_set_tone(&a->impl, channel, (int) reg);
+        }
 		a->note_on_state[channel] = true;
 		break;
 	case CMIDI2_STATUS_PROGRAM:
